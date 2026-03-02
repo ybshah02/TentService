@@ -97,6 +97,8 @@ async def update_profile_me(
             updates["location_lng"] = body.location_lng
         if body.allow_location is not None:
             updates["allow_location"] = body.allow_location
+    elif role == "vendor" and body.profile_image_url is not None:
+        updates["profile_image_url"] = body.profile_image_url or None
 
     if not updates:
         return {"ok": True, "message": "Nothing to update"}
@@ -104,9 +106,9 @@ async def update_profile_me(
     if role == "customer":
         supabase.table("customers").update(updates).eq("profile_id", auth.id).execute()
     else:
-        if "name" in updates:
-            supabase.table("vendors").update({"name": updates["name"]}).eq("profile_id", auth.id).execute()
-        # Vendors don't have location in settings
+        vendor_updates = {k: v for k, v in updates.items() if k in ("name", "profile_image_url")}
+        if vendor_updates:
+            supabase.table("vendors").update(vendor_updates).eq("profile_id", auth.id).execute()
 
     return {"ok": True, "message": "Profile updated"}
 
@@ -129,6 +131,7 @@ async def get_profile_stats(auth: AuthUser = Depends(require_auth)):
             name=None,
             interests=[],
             vendor_id=None,
+            profile_image_url=None,
             markets_attended=0,
             followers_or_following=0,
             interested=0,
@@ -155,7 +158,7 @@ async def get_profile_stats(auth: AuthUser = Depends(require_auth)):
         # Get vendor by profile_id
         vendor_resp = (
             supabase.table("vendors")
-            .select("id, name, follower_count, interested_count")
+            .select("id, name, profile_image_url, follower_count, interested_count")
             .eq("profile_id", auth.id)
             .execute()
         )
@@ -165,6 +168,7 @@ async def get_profile_stats(auth: AuthUser = Depends(require_auth)):
                 name=None,
                 interests=[],
                 vendor_id=None,
+                profile_image_url=None,
                 markets_attended=0,
                 followers_or_following=0,
                 interested=0,
@@ -187,6 +191,7 @@ async def get_profile_stats(auth: AuthUser = Depends(require_auth)):
             name=v.get("name"),
             interests=[],
             vendor_id=str(vendor_id),
+            profile_image_url=v.get("profile_image_url"),
             markets_attended=markets_attended,
             followers_or_following=v.get("follower_count") or 0,
             interested=v.get("interested_count") or 0,
@@ -231,6 +236,7 @@ async def get_profile_stats(auth: AuthUser = Depends(require_auth)):
         name=name,
         interests=interests,
         vendor_id=None,
+        profile_image_url=None,
         markets_attended=markets_interested,
         followers_or_following=vendors_following,
         interested=posts_liked,

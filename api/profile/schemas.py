@@ -24,6 +24,7 @@ class ProfileUpdateRequest(BaseModel):
     location_lat: float | None = None
     location_lng: float | None = None
     allow_location: bool | None = None
+    profile_image_url: str | None = None  # Vendor profile image
 
 
 class ProfileStatsResponse(BaseModel):
@@ -32,6 +33,7 @@ class ProfileStatsResponse(BaseModel):
     name: str | None  # From customers or vendors table
     interests: list[str]  # Customer interests from onboarding
     vendor_id: str | None  # Vendor's ID (for fetching their posts)
+    profile_image_url: str | None = None  # Vendor profile image
     markets_attended: int  # Vendors: markets joined. Customers: markets interested in.
     followers_or_following: int  # Vendors: customers following. Customers: vendors following.
     interested: int  # Vendors: people interested in vendor. Customers: posts liked.

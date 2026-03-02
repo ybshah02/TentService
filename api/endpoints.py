@@ -7,6 +7,7 @@ from api.markets.router import router as markets_router
 from api.posts.router import router as posts_router
 from api.profile.router import router as profile_router
 from api.search.router import router as search_router
+from api.vendors.router import router as vendors_router
 from utils.config import get_settings
 
 api_router = APIRouter()
@@ -19,3 +20,4 @@ api_router.include_router(markets_router)
 api_router.include_router(posts_router)
 api_router.include_router(profile_router)
 api_router.include_router(search_router)
+api_router.include_router(vendors_router)
