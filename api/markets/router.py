@@ -1,3 +1,4 @@
+import math
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,6 +30,18 @@ def _resolve_category(cat: str | None) -> str | None:
     if not cat or not cat.strip() or cat.strip().lower() == "all":
         return None
     return CATEGORY_MAP.get(cat.strip(), cat.strip())
+
+
+def _haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Return distance in miles between two points (Haversine formula)."""
+    R = 3959  # Earth radius in miles
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
 
 def _resolve_date_range(dr: str | None) -> tuple[date | None, date | None]:
@@ -63,6 +76,9 @@ async def list_markets(
         description="Today | This Week | This Month | Next Month | Open Today | All",
     ),
     min_vendors: int | None = Query(default=None, ge=1, le=200),
+    lat: float | None = Query(default=None, description="User latitude for distance filter"),
+    lng: float | None = Query(default=None, description="User longitude for distance filter"),
+    radius_miles: float | None = Query(default=50, ge=1, le=500, description="Max distance in miles from user"),
 ):
     """List markets with pagination and optional filters. Returns published markets."""
     supabase = get_supabase()
@@ -133,18 +149,35 @@ async def list_markets(
         query = query.in_("id", market_id_strs)
 
     query = query.order("start_date", desc=False)
-    if currently_open:
+
+    # When location filter is on, fetch all matching then filter by distance (can't paginate at DB)
+    use_location_filter = lat is not None and lng is not None and radius_miles is not None
+
+    if use_location_filter:
+        response = query.range(0, 9999).execute()
+        items_raw = response.data or []
+        items = [MarketResponse.model_validate(row) for row in items_raw]
+        filtered = []
+        for m in items:
+            mlat = m.location_lat
+            mlng = m.location_lng
+            if mlat is not None and mlng is not None:
+                dist = _haversine_miles(lat, lng, float(mlat), float(mlng))
+                if dist <= radius_miles:
+                    filtered.append(m)
+        total = len(filtered)
+        items = filtered[offset : offset + limit]
+    elif currently_open:
         # Date-only filter: show markets where today is within [start_date, end_date].
-        # Time filtering skipped to avoid timezone mismatches (server UTC vs market local time).
         response = query.range(offset, offset + limit - 1).execute()
         items_raw = response.data or []
         total = response.count if response.count is not None else len(items_raw)
+        items = [MarketResponse.model_validate(row) for row in items_raw]
     else:
         response = query.range(offset, offset + limit - 1).execute()
         items_raw = response.data or []
         total = response.count if response.count is not None else len(items_raw)
-
-    items = [MarketResponse.model_validate(row) for row in items_raw]
+        items = [MarketResponse.model_validate(row) for row in items_raw]
 
     return MarketListResponse(
         items=items,

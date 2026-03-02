@@ -10,6 +10,8 @@ class OnboardCustomerRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     location_city: str | None = None
     location_state: str | None = None
+    location_lat: float | None = None
+    location_lng: float | None = None
     allow_location: bool = False
     age: int | None = None
     gender: str | None = None

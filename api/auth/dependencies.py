@@ -1,4 +1,9 @@
 """Auth dependencies for protected routes."""
+import asyncio
+import json
+import urllib.request
+from urllib.error import HTTPError, URLError
+
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -17,10 +22,49 @@ class AuthUser(BaseModel):
     role: str = "authenticated"
 
 
+def _verify_via_supabase_auth(token: str, url: str, anon_key: str) -> AuthUser | None:
+    """Verify JWT by calling Supabase Auth server. Works with both legacy and asymmetric signing keys."""
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/auth/v1/user",
+        headers={
+            "apikey": anon_key,
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            user = data.get("id") or data.get("sub")
+            email = data.get("email")
+            if user:
+                return AuthUser(id=str(user), email=email, role="authenticated")
+    except (HTTPError, URLError, json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def _verify_via_jwt_secret(token: str, secret: str) -> AuthUser | None:
+    """Verify JWT locally using legacy HS256 secret. Fails if project uses asymmetric keys."""
+    try:
+        payload = jwt.decode(
+            token,
+            secret,
+            audience="authenticated",
+            algorithms=["HS256"],
+        )
+        return AuthUser(
+            id=payload.get("sub", ""),
+            email=payload.get("email"),
+            role=payload.get("role", "authenticated"),
+        )
+    except jwt.PyJWTError:
+        return None
+
+
 async def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> AuthUser:
-    """Require a valid Supabase JWT. Verifies locally using JWT secret. Bypassed when auth_enabled=False."""
+    """Require a valid Supabase JWT. Verifies via Auth server (preferred) or JWT secret. Bypassed when auth_enabled=False."""
     settings = get_settings()
     if not settings.auth_enabled:
         return AuthUser(
@@ -43,30 +87,27 @@ async def require_auth(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not settings.supabase_jwt_secret:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Auth not configured. Set SUPABASE_JWT_SECRET in .env",
-        )
-
-    try:
-        payload = jwt.decode(
+    # Prefer Supabase Auth server verification (works with legacy + asymmetric signing keys)
+    if settings.supabase_url and settings.supabase_publishable_key:
+        user = await asyncio.to_thread(
+            _verify_via_supabase_auth,
             token,
-            settings.supabase_jwt_secret,
-            audience="authenticated",
-            algorithms=["HS256"],
+            settings.supabase_url,
+            settings.supabase_publishable_key,
         )
-    except jwt.PyJWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        if user:
+            return user
 
-    return AuthUser(
-        id=payload.get("sub", ""),
-        email=payload.get("email"),
-        role=payload.get("role", "authenticated"),
+    # Fallback to local JWT secret (legacy HS256 only)
+    if settings.supabase_jwt_secret:
+        user = _verify_via_jwt_secret(token, settings.supabase_jwt_secret)
+        if user:
+            return user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
@@ -79,17 +120,18 @@ async def optional_auth(
         return AuthUser(id="3dcc239c-78b3-46b3-afef-56e39647fff2", email="dev@local", role="authenticated")
     if credentials is None or not credentials.credentials or not credentials.credentials.strip():
         return None
-    try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.supabase_jwt_secret or "",
-            audience="authenticated",
-            algorithms=["HS256"],
+    token = credentials.credentials
+    if settings.supabase_url and settings.supabase_publishable_key:
+        user = await asyncio.to_thread(
+            _verify_via_supabase_auth,
+            token,
+            settings.supabase_url,
+            settings.supabase_publishable_key,
         )
-        return AuthUser(
-            id=payload.get("sub", ""),
-            email=payload.get("email"),
-            role=payload.get("role", "authenticated"),
-        )
-    except (jwt.PyJWTError, TypeError):
-        return None
+        if user:
+            return user
+    if settings.supabase_jwt_secret:
+        user = _verify_via_jwt_secret(token, settings.supabase_jwt_secret)
+        if user:
+            return user
+    return None

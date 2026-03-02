@@ -15,6 +15,17 @@ async def auth_health():
     return {"status": "ok", "module": "auth"}
 
 
+@router.get("/me")
+async def auth_me(auth=Depends(require_auth)):
+    """Return current user's profile (id, role) if onboarding is complete. Used to skip onboarding on sign-in."""
+    sb = get_supabase()
+    resp = sb.table("profiles").select("id, role").eq("id", auth.id).execute()
+    if not resp.data or len(resp.data) == 0:
+        return None
+    row = resp.data[0]
+    return {"id": row["id"], "role": row.get("role") or "customer"}
+
+
 def _slugify(name: str) -> str:
     """Convert name to URL-safe slug."""
     slug = re.sub(r"[^\w\s-]", "", name.lower())
@@ -49,6 +60,8 @@ async def onboard_customer(
             "name": body.name,
             "location_city": body.location_city or None,
             "location_state": body.location_state or None,
+            "location_lat": body.location_lat,
+            "location_lng": body.location_lng,
             "allow_location": body.allow_location,
             "interests": body.interests or [],
         },

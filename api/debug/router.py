@@ -54,14 +54,14 @@ class VendorSignupCreate(BaseModel):
 
 
 def _resolve_admin_id(sb, user_id: str) -> str:
-    """Get admin_id for market creation. Prefer current user if admin, else first admin."""
+    """Get admin_id for market creation. Requires current user to be an admin."""
     admin_row = sb.table("admins").select("id").eq("profile_id", user_id).execute()
-    if admin_row.data and len(admin_row.data) > 0:
-        return str(admin_row.data[0]["id"])
-    first = sb.table("admins").select("id").limit(1).execute()
-    if not first.data or len(first.data) == 0:
-        raise HTTPException(status_code=400, detail="No admin exists. Run seed to create an admin.")
-    return str(first.data[0]["id"])
+    if not admin_row.data or len(admin_row.data) == 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin role required to create markets. Only admins can create markets.",
+        )
+    return str(admin_row.data[0]["id"])
 
 
 def _to_time(s: str | None) -> time | None:
@@ -89,7 +89,7 @@ async def debug_create_market(
     body: DebugMarketCreate,
     auth: AuthUser = Depends(require_auth),
 ):
-    """Create a market. Uses current user as admin if they are one, else first admin."""
+    """Create a market. Requires current user to be an admin."""
     sb = get_supabase()
     admin_id = _resolve_admin_id(sb, auth.id)
 

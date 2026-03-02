@@ -7,6 +7,8 @@ class Settings(BaseSettings):
 
     app_name: str = "TentService"
     debug: bool = False
+    # When False, debug API routes (/api/v1/debug/*) are not mounted
+    debug_routes_enabled: bool = True
 
     # Supabase - from Project Settings → API Keys
     # New keys: sb_publishable_... and sb_secret_...
